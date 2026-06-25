@@ -8,10 +8,10 @@ import os
 def init_db():
     conn = sqlite3.connect('wine_club.db')
     c = conn.cursor()
-    # 1. 와인 테이블
+    # 1. 와인 테이블 (grape 컬럼 추가)
     c.execute('''CREATE TABLE IF NOT EXISTS wines
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  name TEXT, vintage TEXT, country TEXT, region TEXT, type TEXT,
+                  name TEXT, vintage TEXT, country TEXT, region TEXT, type TEXT, grape TEXT,
                   image_path TEXT, reg_date TEXT)''')
     # 2. 시음 노트 테이블
     c.execute('''CREATE TABLE IF NOT EXISTS tasting_notes
@@ -39,31 +39,28 @@ def execute_query(query, params=()):
     conn.commit()
     conn.close()
 
-# --- 아로마 옵션 정의 (초심자를 위한 가이드 포함) ---
+# --- 아로마 옵션 정의 ---
 PRIMARY_OPTIONS = [
     "🍒 붉은 과실 (딸기, 체리, 라즈베리, 자두)", 
     "🫐 검은 과실 (블랙베리, 블랙커런트, 블루베리)", 
     "🍋 시트러스 (레몬, 라임, 자몽, 오렌지)", 
     "🍑 핵과류 (복숭아, 살구, 청포도)", 
-    " Pineapple 열대과일 (파인애플, 망고, 패션후르츠)",
+    "🍍 열대과일 (파인애플, 망고, 패션후르츠)",
     "🌹 꽃 (장미, 제비꽃, 아카시아, 국화)", 
     "🌿 허브/식물 (민트, 유칼립투스, 피망, 컷글라스)", 
     "🌶️ 향신료 (후추, 감초, 계피, 정향)"
 ]
-
 SECONDARY_OPTIONS = [
     "🪵 오크 숙성 (바닐라, 삼나무, 토스트, 코코넛)", 
     "🧈 유산 발효 (버터, 크림, 요거트, 치즈)", 
     "🍞 효모 숙성 (구운 빵, 비스킷, 브리오슈, 막걸리 향)"
 ]
-
 TERTIARY_OPTIONS = [
     "🍂 자연/동물 (흙, 버섯, 가죽, 육류, 사냥고기, 낙엽)", 
     "🍇 숙성 과실 (말린 자두, 건포도, 무화과, 잼)", 
     "🍫 기타 숙성 (초콜릿, 커피, 담배, 견과류, 꿀, 타르)"
 ]
 
-# 아로마 저장용 요약 함수 (괄호 안의 세부 예시를 제외하고 핵심 키워드만 추출)
 def combine_aromas(p_list, s_list, t_list):
     parts = []
     if p_list:
@@ -73,7 +70,6 @@ def combine_aromas(p_list, s_list, t_list):
     if t_list:
         parts.append(f"[3차] {', '.join([a.split(' (')[0] for a in t_list])}")
     return " | ".join(parts) if parts else "없음"
-
 
 # --- Streamlit UI 구성 ---
 st.set_page_config(page_title="와인 동호회 테이스팅 노트", layout="wide")
@@ -93,9 +89,12 @@ if menu == "와인 등록 (회장님 전용)":
         with col1:
             w_country = st.text_input("생산국 (예: 프랑스, 이탈리아)")
         with col2:
-            w_region = st.text_input("세부 지역 (예: 부르고뉴, 토스카나)")
+            w_region = st.text_input("세부 지역 (예: 부르고뉴, 론)")
         with col3:
             w_type = st.selectbox("와인 종류", ["레드", "화이트", "스파클링", "디저트"])
+            
+        # 품종 입력칸 추가 (가이드 텍스트 포함)
+        w_grape = st.text_input("포도 품종 (예: 피노 누아, 샤르도네, 시라, 사바냥 등)")
             
         w_image = st.file_uploader("와인 사진 업로드", type=['png', 'jpg', 'jpeg'])
         submitted = st.form_submit_button("등록하기")
@@ -109,12 +108,13 @@ if menu == "와인 등록 (회장님 전용)":
                 with open(image_path, "wb") as f:
                     f.write(w_image.getbuffer())
             
-            execute_query('''INSERT INTO wines (name, vintage, country, region, type, image_path, reg_date) 
-                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                          (w_name, w_vintage, w_country, w_region, w_type, image_path, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            # INSERT 쿼리에 grape 추가
+            execute_query('''INSERT INTO wines (name, vintage, country, region, type, grape, image_path, reg_date) 
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                          (w_name, w_vintage, w_country, w_region, w_type, w_grape, image_path, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             st.success(f"[{w_type}] 와인 '{w_name}' 등록이 완료되었습니다!")
 
-# --- 2. 시음 노트 작성 (1차, 2차, 3차향 분류 반영) ---
+# --- 2. 시음 노트 작성 ---
 elif menu == "시음 노트 작성":
     st.header("📝 시음 노트 작성")
     
@@ -140,10 +140,7 @@ elif menu == "시음 노트 작성":
             tannin = st.slider("타닌 (Tannin)", 1, 5, 3)
             body = st.slider("바디감 (Body)", 1, 5, 3)
             
-        # --- 향 카테고리 세분화 구간 ---
         st.markdown("#### 👃 아로마(향) 세부 체크리스트")
-        st.info("초심자분들은 우측 괄호 안의 세부 예시 단어들을 참고하여 느껴지는 향을 체크해 보세요!")
-        
         selected_primary = st.multiselect("1차향 (포도 품종 자체와 발효에서 오는 과실·꽃·허브향)", PRIMARY_OPTIONS)
         selected_secondary = st.multiselect("2차향 (오크 숙성, 유산 발효, 효모 접촉 등 양조 과정의 향)", SECONDARY_OPTIONS)
         selected_tertiary = st.multiselect("3차향 (장기 병 숙성에서 오는 축적된 숙성향)", TERTIARY_OPTIONS)
@@ -152,9 +149,7 @@ elif menu == "시음 노트 작성":
         
         if st.button("노트 저장하기"):
             if member_name:
-                # 1, 2, 3차향을 구조화된 단일 문자열로 가공
                 aromas_str = combine_aromas(selected_primary, selected_secondary, selected_tertiary)
-                
                 execute_query('''INSERT INTO tasting_notes 
                                  (wine_id, member_name, score, sweetness, acidity, tannin, body, aromas, comment, write_date) 
                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
@@ -163,7 +158,7 @@ elif menu == "시음 노트 작성":
             else:
                 st.error("이름을 입력해 주세요.")
 
-# --- 3. 내 시음 노트 수정 (수정 시에도 분류별 매핑 지원) ---
+# --- 3. 내 시음 노트 수정 ---
 elif menu == "내 시음 노트 수정":
     st.header("✏️ 내가 작성한 노트 수정")
     m_name = st.text_input("노트를 수정할 본인의 이름(닉네임)을 입력하세요")
@@ -185,7 +180,6 @@ elif menu == "내 시음 노트 수정":
             
             st.markdown("---")
             st.subheader("기존 데이터 수정")
-            
             new_score = st.slider("⭐ 와인 총점 수정", 50, 100, int(orig['score']))
             
             col1, col2 = st.columns(2)
@@ -196,7 +190,6 @@ elif menu == "내 시음 노트 수정":
                 new_tannin = st.slider("타닌 수정", 1, 5, int(orig['tannin']))
                 new_body = st.slider("바디감 수정", 1, 5, int(orig['body']))
                 
-            # 기존에 저장된 요약본 문자열을 기반으로 기존 체크박스 자동 복원
             orig_aromas_str = orig['aromas'] if orig['aromas'] else ""
             default_p = [opt for opt in PRIMARY_OPTIONS if opt.split(' (')[0] in orig_aromas_str]
             default_s = [opt for opt in SECONDARY_OPTIONS if opt.split(' (')[0] in orig_aromas_str]
@@ -220,7 +213,8 @@ elif menu == "내 시음 노트 수정":
 # --- 4. 와인별 모아보기 ---
 elif menu == "와인별 모아보기":
     st.header("🍷 와인별 시음기")
-    wines_df = run_query("SELECT id, name, vintage, country, region, type FROM wines")
+    # grape 컬럼 추가 조회
+    wines_df = run_query("SELECT id, name, vintage, country, region, type, grape FROM wines")
     
     if not wines_df.empty:
         wine_dict = {f"{row['name']} ({row['vintage']})": row['id'] for _, row in wines_df.iterrows()}
@@ -228,7 +222,8 @@ elif menu == "와인별 모아보기":
         selected_wine_id = wine_dict[selected_wine_label]
         
         w_info = wines_df[wines_df['id'] == selected_wine_id].iloc[0]
-        st.markdown(f"**🌍 와인 정보:** {w_info['type']} 와인 | {w_info['country']} / {w_info['region']}")
+        # 상단 안내 텍스트에 품종(grape) 정보 추가 반영
+        st.markdown(f"**🌍 와인 정보:** {w_info['type']} 와인 | {w_info['country']} / {w_info['region']} | 🍇 품종: {w_info['grape']}")
         
         query = f"SELECT member_name as 작성자, score as 총점, sweetness as 당도, acidity as 산도, tannin as 타닌, body as 바디, aromas as 향, comment as 코멘트, write_date as 작성일 FROM tasting_notes WHERE wine_id = {selected_wine_id}"
         notes_df = run_query(query)
@@ -258,7 +253,8 @@ elif menu == "개인별 모아보기":
     if not users_df.empty:
         selected_user = st.selectbox("회원을 선택하세요", users_df['member_name'].tolist())
         
-        query = f'''SELECT w.name as 와인명, w.vintage as 빈티지, w.type as 종류, w.country as 국가, w.region as 지역,
+        # 조인문 쿼리에 w.grape 추가
+        query = f'''SELECT w.name as 와인명, w.vintage as 빈티지, w.type as 종류, w.country as 국가, w.region as 지역, w.grape as 품종,
                            t.score as 총점, t.sweetness as 당도, t.acidity as 산도, 
                            t.tannin as 타닌, t.body as 바디, t.aromas as 향, t.comment as 코멘트, t.write_date as 작성일 
                     FROM tasting_notes t 
